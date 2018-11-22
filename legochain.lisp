@@ -1,5 +1,15 @@
 (defpackage :legochain
-  (:use :cl))
+  (:use :cl)
+  (:export
+   :blockchain
+   :block
+   :compute-hash
+   :decode-payload 
+   :add-data-to-blockchain
+   :push-block-to-blockchain
+   :last-block-on-blockchain
+   :verify-blockchain
+   ))
 
 (in-package :legochain)
 
@@ -62,6 +72,7 @@
   (with-slots (payload) b
     (conspack:decode payload)))
 
+;; -------------------------- BLOCK MINING -----------------------
 
 (defparameter *mining-difficulty* 4
   "Number of zeroes the hash must start with to satisfy the difficulty condition when mining.")
@@ -87,7 +98,10 @@
 That is, a block that satisfies the difficulty/challenge."
   ;; a terrible loop that will keep the computer busy...
   (let ((b nil)                         ;the final block
-        (nonce-value 0))                            
+        (nonce-value 0))
+    (format t "Mining block [~D]. Payload is ~D bytes...!~%"
+            id
+            (length payload))
     (loop
       :do
       (setf b
@@ -106,7 +120,7 @@ That is, a block that satisfies the difficulty/challenge."
     b
     ))
 
-
+;; ---------------------------------------------------------------------
 
 (defmethod add-data-to-blockchain ((chain blockchain)
                                   payload)
@@ -148,36 +162,58 @@ this automatically mines a new block with the payload."
                              :id 0)))
 
 
+;; ----------------------- blockchain verification ----------------
+(defun complies-with-rules-of-the-blockchain (head previous)
+  "T if the block complies with the rules of the blockchain. 
+Requires the previous block."
+  (declare (type block head)
+           (type (or null block) previous))
+  (or (null previous)         ; no previous block
+      ;; if there is a previous block:
+      (and 
+       ;; hash of previous block equals previous-hash of current block
+       (string= (block-previous-hash head)
+                (compute-hash previous))
+       ;; timestamps are consecutive
+       ;; note: >= because (get-universal-time) only is precise to seconds.
+       (>= (block-timestamp head)
+           (block-timestamp previous))
+       ;; ids are consecutive
+       (> (block-id head)
+          (block-id previous))
+       ;; hash complies with challenge
+       (hash-complies-with-difficulty (compute-hash head))
+       ;; T here only so the AND block returns either T or NIL
+       T
+       )))
+
+
 (defmethod verify-blockchain ((chain blockchain))
   "Check that all blocks comply the rules of the blockchain..
-Returns array where all should be T"
+Returns array where all should be T. If an element at the array
+is NIL, then the block at that position failed the check."
   (let ((blocks (blockchain-blocks chain)))
      (maplist ;; applies successive CDR to the blocks list
       (lambda (blocklist)
         ;; The rules...
         ;; verification of the list of blocks
+        ;; each block is verified against the previous.
         (let  ((head (first blocklist))
                (previous (second blocklist)))
-          ;; function that says head is good with previous
-          (or (null previous)         ; no previous block
-              ;; if there is a previous block:
-              (and 
-               ;; hash of previous block equals previous-hash of current block
-               (string= (block-previous-hash head)
-                        (compute-hash previous))
-               ;; timestamps are consecutive
-               ;; note: >= because (get-universal-time) only is precise to seconds.
-               (>= (block-timestamp head)
-                   (block-timestamp previous))
-               ;; ids are consecutive
-               (> (block-id head)
-                  (block-id previous))
-               ;; hash complies with challenge
-               (hash-complies-with-difficulty (compute-hash head))
-               ;; T here only so the AND block returns either T or NIL
-               T
-               ))))
+          (complies-with-rules-of-the-blockchain head previous)))
       blocks)))
+
+(defmethod verify-blockchain-p ((chain blockchain))
+  "Similar to verify-blockchain but limits the reply to either T or NIL."
+  (every (lambda (x) (and x T))
+         (verify-blockchain chain)))
+
+
+
+;;-------------------------------------------------------------------
+
+
+;; misc test / helper
 
 ;;show all blockchain
 (defun show-blockchain ()
@@ -189,8 +225,6 @@ Returns array where all should be T"
              (mapcar #'sb-mop:slot-definition-name
                      (sb-mop:class-slots (class-of b)))))
           (blockchain-blocks *my-blockchain*)))
-
-
 
 (defun add-stuff ()
   "Add test blocks to blockchain."
@@ -210,6 +244,36 @@ Returns array where all should be T"
                     (block-payload bl))))
 
 
+
+(defun test-blockchain ()
+  "Simple blockchain test."
+  (let ((test-data '("I. One"
+                     "II. Two"
+                     "III. Three"
+                     "IV. Four"
+                     )))
+    (startup)
+    ;; add strings to blockchain.
+    (loop for str in test-data
+          do
+          (add-data-to-blockchain *my-blockchain*
+                                  (conspack:encode str)))
+    ;; verify blockchain
+    (assert (verify-blockchain-p *my-blockchain*))
+    ;;compare payloads with original str
+    ;;note: payloads are in reverse order than original test-data.
+    ;;note: ignore initial block.
+    (let
+        ((a
+           (butlast (loop for bl in (blockchain-blocks *my-blockchain*)
+                          collecting (conspack:decode (block-payload bl)))))
+         (b
+           (reverse test-data)))
+      ;; return the test as boolean values,
+      ;; and the payload
+      (values (equalp a b)
+              :blockchain-data a
+              :original-data b))))
 
 
 

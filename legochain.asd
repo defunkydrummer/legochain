@@ -4,7 +4,9 @@
   :license "MIT"
   :version "0.1"
   :depends-on
-  (#:alexandria #:cl-ppcre)
+  (#:alexandria #:cl-ppcre
+                #:cl-conspack
+                #:ironclad)
   :serial T
   :components ((:file "legochain"))
   :description  "Toy blockchain.")
