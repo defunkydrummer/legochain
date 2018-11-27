@@ -6,11 +6,12 @@
   :depends-on
   (#:alexandria #:cl-ppcre
                 #:cl-conspack
-                #:ironclad)
+                #:ironclad
+                #:bt-semaphore
+                #:usocket
+                #:usocket-server)
   :serial T
   :components ((:file "legochain"))
   :description  "Toy blockchain.")
-
-
 
 

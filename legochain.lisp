@@ -2,7 +2,6 @@
   (:use :cl)
   (:export
    :blockchain
-   :block
    :compute-hash
    :decode-payload 
    :add-data-to-blockchain
@@ -20,15 +19,6 @@
            :documentation "The blockchain itself, a list of blocks."))
   (:documentation "A blockchain."))
 
-(defmethod push-block-to-blockchain ((the-block block) (chain blockchain))
-  (with-slots (blocks) chain
-    ;; just push the block!
-    (push the-block blocks)))
-
-;; the last (recent) block on the chain
-(defmethod last-block-on-blockchain ((chain blockchain))
-  (with-slots (blocks) chain
-    (first blocks))) ;latest
 
 (defparameter *dummy-value*
   (conspack:encode "This block has a dummy value. Congratulations!"))
@@ -37,7 +27,7 @@
 (deftype payload-type () `(or null
                               (simple-array (unsigned-byte 8))))
 
-(defclass block ()
+(defclass bblock ()
   ((id :initarg :id
        :reader block-id
        :documentation "Id of the current block.")
@@ -58,17 +48,27 @@
   (:documentation "A block in the blockchain"))
 
 ;; tell conspack how to encode such a block into a vector of bytes
-(conspack:defencoding block
+(conspack:defencoding bblock
   id previous-hash timestamp nonce-value payload)
 
+(defmethod push-block-to-blockchain ((the-block bblock) (chain blockchain))
+  (with-slots (blocks) chain
+    ;; just push the block!
+    (push the-block blocks)))
+
+;; the last (recent) block on the chain
+(defmethod last-block-on-blockchain ((chain blockchain))
+  (with-slots (blocks) chain
+    (first blocks))) ;latest
+
 ;; compute hash for the block
-(defmethod compute-hash ((b block))
+(defmethod compute-hash ((b bblock))
   (ironclad:byte-array-to-hex-string 
    (ironclad:digest-sequence :sha256
                              (conspack:encode b))))
 
 ;; decode the payload for a block
-(defmethod decode-payload ((b block))
+(defmethod decode-payload ((b bblock))
   (with-slots (payload) b
     (conspack:decode payload)))
 
@@ -105,7 +105,7 @@ That is, a block that satisfies the difficulty/challenge."
     (loop
       :do
       (setf b
-            (make-instance 'block
+            (make-instance 'bblock
                            :payload payload
                            :id id
                            :previous-hash previous-hash
@@ -143,7 +143,6 @@ this automatically mines a new block with the payload."
 
 (defvar *my-blockchain* nil)
 
-
 (defun startup ()
   "Some startup tasks. This erases the in-memory blockchain!"
   ;; compile REGEX
@@ -166,8 +165,8 @@ this automatically mines a new block with the payload."
 (defun complies-with-rules-of-the-blockchain (head previous)
   "T if the block complies with the rules of the blockchain. 
 Requires the previous block."
-  (declare (type block head)
-           (type (or null block) previous))
+  (declare (type bblock head)
+           (type (or null bblock) previous))
   (or (null previous)         ; no previous block
       ;; if there is a previous block:
       (and 
@@ -276,6 +275,52 @@ is NIL, then the block at that position failed the check."
               :original-data b))))
 
 
+
+
+
+
+;;---------------------- SERVER ------------------------------
+
+
+
+(defvar *server-eltype* 'character)
+
+(defun create-legochain-server (&key (host #(127 0 0 1))
+                                     (port 667))
+  "Create a legochain server using sockets and accept connections on port number X."
+  (usocket:socket-server host port
+                         ;; server handler function
+                         (lambda (stream stdout)
+                           (format stdout "Receiving connection from ~A:~D ~%"
+                                   usocket:*remote-host*
+                                   usocket:*remote-port*)
+                           (loop
+                             for o = (read stream nil 'eof)
+                             do
+                             (cond
+                               ((eql o 'eof) (format stdout "EOF!"))
+                               (t (format stdout "Received object: ~A~%" o)
+                                  (return nil) ; exit our server handler function
+                                  ))))
+                         ;; arguments to our function
+                         (list *standard-output*)
+                         :in-new-thread T
+                         :multi-threading T
+                         :element-type *server-eltype*))
+
+;; ----------------- CLIENT -----------------------------
+
+(defun connect-to-legochain (&key (host #(127 0 0 1))
+                                  (port 667))
+  (let ((socket (usocket:socket-connect host
+                                         port
+                                         :element-type *server-eltype*
+                                         :timeout 10
+                                        )))
+    ;; send something
+    (print "HOLISSS " (usocket:socket-stream socket))
+    
+    (force-output (usocket:socket-stream socket))))
 
 
 
