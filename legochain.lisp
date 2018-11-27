@@ -154,11 +154,12 @@ this automatically mines a new block with the payload."
   ;; new blockchain
   (setf *my-blockchain* (make-instance 'blockchain))
   ;; my blockchain needs a new block... the first block
-  (push-block-to-blockchain *my-blockchain*
-                            (mine-new-block  
+  (push-block-to-blockchain (mine-new-block  
                              :previous-hash nil
                              :payload *dummy-value*
-                             :id 0)))
+                             :id 0)
+                            *my-blockchain*))
+
 
 
 ;; ----------------------- blockchain verification ----------------
