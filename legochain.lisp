@@ -51,6 +51,22 @@
 (conspack:defencoding bblock
   id previous-hash timestamp nonce-value payload)
 
+;; how to encode the blockchain
+(conspack:defencoding blockchain
+  blocks)
+
+(defmethod encode-block ((b bblock))
+  (conspack:encode b))
+
+(defun decode-block (bytestream)
+  (conspack:decode bytestream))
+
+(defmethod encode-blockchain ((b blockchain))
+  (conspack:encode b))
+
+(defun decode-blockchain (bytestream)
+  (conspack:decode bytestream))
+
 (defmethod push-block-to-blockchain ((the-block bblock) (chain blockchain))
   (with-slots (blocks) chain
     ;; just push the block!
@@ -65,12 +81,17 @@
 (defmethod compute-hash ((b bblock))
   (ironclad:byte-array-to-hex-string 
    (ironclad:digest-sequence :sha256
-                             (conspack:encode b))))
+                             (encode-block b))))
 
 ;; decode the payload for a block
 (defmethod decode-payload ((b bblock))
   (with-slots (payload) b
     (conspack:decode payload)))
+
+(defun encode-payload (payload-data)
+  "Encode the payload so it can be stored on a block."
+  (conspack:encode payload-data))
+
 
 ;; -------------------------- BLOCK MINING -----------------------
 
@@ -235,13 +256,12 @@ is NIL, then the block at that position failed the check."
         do
         (add-data-to-blockchain
          *my-blockchain*
-         (conspack:encode str))))
+         (encode-payload str))))
 
 (defun list-payloads ()
   "Show all payloads (decoded)"
   (loop for bl in (blockchain-blocks *my-blockchain*)
-        collecting (conspack:decode
-                    (block-payload bl))))
+        collecting (decode-payload bl)))
 
 
 
@@ -257,7 +277,7 @@ is NIL, then the block at that position failed the check."
     (loop for str in test-data
           do
           (add-data-to-blockchain *my-blockchain*
-                                  (conspack:encode str)))
+                                  (encode-payload str)))
     ;; verify blockchain
     (assert (verify-blockchain-p *my-blockchain*))
     ;;compare payloads with original str
@@ -266,7 +286,7 @@ is NIL, then the block at that position failed the check."
     (let
         ((a
            (butlast (loop for bl in (blockchain-blocks *my-blockchain*)
-                          collecting (conspack:decode (block-payload bl)))))
+                          collecting (decode-payload bl))))
          (b
            (reverse test-data)))
       ;; return the test as boolean values,
@@ -283,8 +303,8 @@ is NIL, then the block at that position failed the check."
 ;;---------------------- SERVER ------------------------------
 
 
-
-(defvar *server-eltype* 'character)
+;; Type for the data interchanged between peers.
+(deftype object-type () `(unsigned-byte 8))
 
 (defun create-legochain-server (&key (host #(127 0 0 1))
                                      (port 667))
@@ -307,7 +327,7 @@ is NIL, then the block at that position failed the check."
                          (list *standard-output*)
                          :in-new-thread T
                          :multi-threading T
-                         :element-type *server-eltype*))
+                         :element-type 'object-type))
 
 ;; ----------------- CLIENT -----------------------------
 
@@ -315,11 +335,11 @@ is NIL, then the block at that position failed the check."
                                   (port 667))
   (let ((socket (usocket:socket-connect host
                                          port
-                                         :element-type *server-eltype*
+                                         :element-type 'object-type
                                          :timeout 10
                                         )))
     ;; send something
-    (print "HOLISSS " (usocket:socket-stream socket))
+    (write-sequence #(1 2 3 4) (usocket:socket-stream socket))
     
     (force-output (usocket:socket-stream socket))))
 
