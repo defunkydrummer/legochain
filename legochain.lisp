@@ -27,6 +27,7 @@
 (deftype payload-type () `(or null
                               (simple-array (unsigned-byte 8))))
 
+
 (defclass bblock ()
   ((id :initarg :id
        :reader block-id
@@ -300,48 +301,120 @@ is NIL, then the block at that position failed the check."
 
 
 
-;;---------------------- SERVER ------------------------------
+;;---------------------- PEER TO PEER ------------------------------
 
 
 ;; Type for the data interchanged between peers.
-(deftype object-type () `(unsigned-byte 8))
+(defparameter *el-type* 'character)
+
+;; PROTOCOL: --------------------------------------------------
+;; message is a lisp object (readable string).
+;; message has the operation symbol, and the data
+(defparameter *operations*
+  '(:get-all    ;obtain complete blockchain from peer
+    :get-latest ;obtain latest block
+    :show-block ;show recently created block to peers
+    :hi ; say 'hi (for test purposes)
+    ))
+;; the data is a string
+(deftype encoded-data-type () 'string)
+;; the data is a string that has passed through these steps:
+;; 1. convert to byte array using CONSPACK
+;; 2. convert to hex string using IRONCLAD..
+(defun encode-data (obj)
+  "Produces encoded string of the desired object."
+  (ironclad:byte-array-to-hex-string (conspack:encode obj)))
+;; we do the inverse for decoding
+(defun decode-data (encoded)
+  (declare (type encoded-data-type encoded)) 
+  "Inverse of encode-data. "
+  (conspack:decode (ironclad:hex-string-to-byte-array encoded)))
+;; ------------------ end protocol -----------------------------
+
+(defun send-message-to-stream (operation object to-stream)
+  "Create a message to send through the socket, based on operation and the data. This also encodes object to data, using conspack."
+  (assert (member operation *operations*))
+  (print `(,operation . ,(encode-data object))
+         to-stream))
+
+(defun decode-message (obj)
+  "Decode message. Object has already been READ, of course.
+Returns operation and decoded object."
+  (declare (type cons obj))
+  (let ((operation (car obj))
+        (data (cdr obj)))
+    ;; assert that operation is valid, otherwise error.
+    (unless (member operation *operations*)
+      (error "Received invalid operation: ~A~%" operation))
+    ;; assert type of encoded data, it should be
+    ;; the one used by conspack...
+    (unless (typep data 'encoded-data-type)
+      (error "Invalid data type for data: ~A~%"
+             (type-of data)))
+    ;; decode data by using CONSPACK decode, and return
+    (values operation
+            (decode-data data))))
+
+
+;;---------------------- SERVER ------------------------------
+
+(defun hi-message-handler (obj stdout)
+  (format stdout "Client says Hi: ~%~A~%" obj))
+
+(defun message-handler (msg stdout)
+  "Handle an incoming message."
+  ;; decode it
+  (multiple-value-bind (operation obj)
+      (decode-message msg)
+    ;; what do we do?
+    (case operation
+      (:hi (hi-message-handler obj stdout))
+      (otherwise
+       (format stdout "Received an unimplemented operation: ~A~%" operation)))))
+
+(defun server-function (stream stdout)
+  "Function that handles incoming packets."
+  (format stdout "Receiving connection from ~A:~D ~%"
+          usocket:*remote-host*
+          usocket:*remote-port*)
+  (loop
+    for o = (read stream nil 'eof)
+    do
+    (cond
+      ((eql o 'eof) (format stdout "EOF!"))
+      (t (format stdout "Received object: ~A~%" o)
+         ;; handle the message
+         (message-handler o stdout)
+         (return nil)               ; exit our server handler function
+         ))))
 
 (defun create-legochain-server (&key (host #(127 0 0 1))
-                                     (port 667))
+                                     (port 6667))
   "Create a legochain server using sockets and accept connections on port number X."
   (usocket:socket-server host port
                          ;; server handler function
-                         (lambda (stream stdout)
-                           (format stdout "Receiving connection from ~A:~D ~%"
-                                   usocket:*remote-host*
-                                   usocket:*remote-port*)
-                           (loop
-                             for o = (read stream nil 'eof)
-                             do
-                             (cond
-                               ((eql o 'eof) (format stdout "EOF!"))
-                               (t (format stdout "Received object: ~A~%" o)
-                                  (return nil) ; exit our server handler function
-                                  ))))
-                         ;; arguments to our function
+                         #'server-function 
+                         ;; arguments to our function, besides stream.
                          (list *standard-output*)
                          :in-new-thread T
                          :multi-threading T
-                         :element-type 'object-type))
+                         :element-type *el-type*))
 
 ;; ----------------- CLIENT -----------------------------
 
 (defun connect-to-legochain (&key (host #(127 0 0 1))
-                                  (port 667))
+                                  (port 6667))
   (let ((socket (usocket:socket-connect host
                                          port
-                                         :element-type 'object-type
-                                         :timeout 10
+                                        :element-type *el-type*
+                                        :timeout 10
                                         )))
-    ;; send something
-    (write-sequence #(1 2 3 4) (usocket:socket-stream socket))
-    
+    ;; send hi
+    (send-message-to-stream :hi
+                            (format nil "Hello from peer on ~A port ~A." host port)
+     (usocket:socket-stream socket))
     (force-output (usocket:socket-stream socket))))
+
 
 
 
