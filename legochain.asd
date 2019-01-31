@@ -9,7 +9,7 @@
                 #:ironclad
                 #:bt-semaphore
                 #:usocket
-                #:usocket-server)
+                #:usocket-server) 
   :serial T
   :components ((:file "legochain"))
   :description  "Toy blockchain.")

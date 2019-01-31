@@ -363,14 +363,20 @@ Returns operation and decoded object."
 
 (defun message-handler (msg stdout)
   "Handle an incoming message."
-  ;; decode it
-  (multiple-value-bind (operation obj)
-      (decode-message msg)
-    ;; what do we do?
-    (case operation
-      (:hi (hi-message-handler obj stdout))
-      (otherwise
-       (format stdout "Received an unimplemented operation: ~A~%" operation)))))
+  ;; message must be a lisp cons...
+  (if (typep msg 'cons)   
+      ;; decode it
+      (multiple-value-bind (operation obj)
+          (decode-message msg)
+        ;; what do we do?
+        (case operation
+          (:hi (hi-message-handler obj stdout))
+          (otherwise
+           (format stdout "Received an unimplemented operation: ~A~%" operation))))
+      ;; not a good type of msg
+      (format stdout "Invalid data type of message: ~A~% "
+              (type-of msg))))
+
 
 (defun server-function (stream stdout)
   "Function that handles incoming packets."
@@ -385,7 +391,10 @@ Returns operation and decoded object."
       (t (format stdout "Received object: ~A~%" o)
          ;; handle the message
          (message-handler o stdout)
-         (return nil)               ; exit our server handler function
+         
+         ;; exit our server function.
+         ;; that means we don't read further messages.
+         (return nil)
          ))))
 
 (defun create-legochain-server (&key (host #(127 0 0 1))
@@ -416,6 +425,19 @@ Returns operation and decoded object."
     (force-output (usocket:socket-stream socket))))
 
 
+(defun send-malicious (&key (host #(127 0 0 1))
+                                  (port 6667))
+  (let ((socket (usocket:socket-connect host
+                                        port
+                                        :element-type *el-type*
+                                        :timeout 10
+                                        )))
+    ;; send unexpected stuff
+    (dotimes (x 5)
+      (print "XXXX" (usocket:socket-stream socket))
+      (force-output (usocket:socket-stream socket))
+      (sleep 1))
+    ))
 
 
 
