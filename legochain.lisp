@@ -167,7 +167,7 @@ this automatically mines a new block with the payload."
 (defvar *my-blockchain* nil)
 
 (defun start-my-blockchain ()
-  "Some startup tasks. This erases the in-memory blockchain!
+  "Some startup tasks.
 And creates a blank blockchain (well, not blank, it has one block.)"
   ;; compile REGEX
   (unless *regex-difficulty*
@@ -176,13 +176,16 @@ And creates a blank blockchain (well, not blank, it has one block.)"
            (regex-for-difficulty *mining-difficulty*))))
 
   ;; new blockchain
-  (setf *my-blockchain* (make-instance 'blockchain))
-  ;; my blockchain needs a new block... the first block
-  (push-block-to-blockchain (mine-new-block  
-                             :previous-hash nil
-                             :payload *dummy-value*
-                             :id 0)
-                            *my-blockchain*))
+  (let ((b (make-instance 'blockchain)))
+    ;; my blockchain needs a new block... the first block
+    (push-block-to-blockchain (mine-new-block  
+                               :previous-hash nil
+                               :payload *dummy-value*
+                               :id 0)
+                              b)
+    ;; return it
+    b
+    ))
 
 
 
@@ -240,7 +243,7 @@ is NIL, then the block at that position failed the check."
 ;; misc test / helper
 
 ;;show all blockchain
-(defun show-blockchain ()
+(defun show-blockchain (chain)
   (mapcar (lambda (b)
             (mapcar
              (lambda (slot-name)
@@ -248,9 +251,9 @@ is NIL, then the block at that position failed the check."
                      (slot-value b slot-name)))
              (mapcar #'sb-mop:slot-definition-name
                      (sb-mop:class-slots (class-of b)))))
-          (blockchain-blocks *my-blockchain*)))
+          (blockchain-blocks chain)))
 
-(defun add-stuff ()
+(defun add-stuff (chain)
   "Add test blocks to blockchain."
   (loop for str in '("Interesting stuff"
                      "Another block"
@@ -258,12 +261,12 @@ is NIL, then the block at that position failed the check."
                      "WOW, blockchains are cool")
         do
         (add-data-to-blockchain
-         *my-blockchain*
+         chain
          (encode-payload str))))
 
-(defun list-payloads ()
+(defun list-payloads (chain)
   "Show all payloads (decoded)"
-  (loop for bl in (blockchain-blocks *my-blockchain*)
+  (loop for bl in (blockchain-blocks chain)
         collecting (decode-payload bl)))
 
 
@@ -274,27 +277,30 @@ is NIL, then the block at that position failed the check."
                      "II. Two"
                      "III. Three"
                      "IV. Four"
-                     )))
-    (start-my-blockchain)
+                     ))
+        (chain (start-my-blockchain)))
+    
     ;; add strings to blockchain.
     (loop for str in test-data
           do
-          (add-data-to-blockchain *my-blockchain*
+          (add-data-to-blockchain chain
                                   (encode-payload str)))
     ;; verify blockchain
-    (assert (verify-blockchain-p *my-blockchain*))
+    (assert (verify-blockchain-p chain))
     ;;compare payloads with original str
     ;;note: payloads are in reverse order than original test-data.
     ;;note: ignore initial block.
     (let
         ((a
-           (butlast (loop for bl in (blockchain-blocks *my-blockchain*)
+           (butlast (loop for bl in (blockchain-blocks chain)
                           collecting (decode-payload bl))))
          (b
            (reverse test-data)))
-      ;; return the test as boolean values,
+      ;; return the blockchain, the test as boolean values,
       ;; and the payload
-      (values (equalp a b)
+      (values
+       chain
+       :test-result (equalp a b)
               :blockchain-data a
               :original-data b))))
 
@@ -303,7 +309,7 @@ is NIL, then the block at that position failed the check."
 
 
 
-;;---------------------- PEER TO PEER ------------------------------
+;;---------------------- PEER TO PEER STUFF------------------------------
 
 
 ;; Type for the data interchanged between peers.
@@ -314,9 +320,31 @@ is NIL, then the block at that position failed the check."
 ;; default port
 (defparameter *default-port* 6667)
 
-;; The Peers, a list of plists containing keys:
-;; :ip and :port
-(defparameter *peers* (list '(:ip *default-host* :port 6667)))
+;; Server status (a class)
+(defclass server ()
+  ((host :initarg :host
+         :initform *default-host*
+         :reader server-host
+         :documentation "Vector with IP of this server."
+         :type simple-array)
+   (port :initarg :port
+         :initform *default-port*
+         :reader server-port
+         :documentation "Port of this server."
+         ;; can be an integer from 0 to 65535, we tell Lisp.
+         :type (integer 0 65535))
+   (socket :accessor server-socket
+           :documentation "The socket server of this server."
+           :type usocket:stream-server-usocket)
+   (blockchain :accessor server-blockchain
+               :documentation "The blockchain of this server."
+               :type blockchain)
+   (peers :accessor server-peers
+          :documentation "A list of peers"
+          :type cons))
+  (:documentation "Server status, config, and data."))
+
+
 
 
 ;; PROTOCOL: --------------------------------------------------
@@ -492,15 +520,35 @@ Returns operation and decoded object."
 
 (defun create-legochain-server (&key (host *default-host*)
                                      (port *default-port*))
-  "Create a legochain server using sockets and accept connections on port number X."
-  (usocket:socket-server host port
-                         ;; server handler function
-                         #'server-function 
-                         ;; arguments to our function, besides stream.
-                         (list *standard-output* host port) 
-                         :in-new-thread T
-                         :multi-threading T
-                         :element-type *el-type*))
+  "Create a legochain server using sockets and accept connections on port number X. Return the server object... "
+  (let ((server (make-instance 'server
+                               :host host
+                               :port port)))
+    ;; create a blank blockchain
+    (with-slots (blockchain socket) server
+      (setf blockchain (start-my-blockchain))
+      ;; start the socket server 
+      (setf socket
+            (usocket:socket-server host port
+                                   ;; server handler function
+                                   #'server-function 
+                                   ;; arguments to our function, besides stream:
+                                   ;; stdout and my server object
+                                   (list *standard-output* host port server) 
+                                   :in-new-thread T
+                                   :multi-threading T
+                                   :element-type *el-type*)))
+    ;; return the server object
+    server
+    ))
+
+;; ************ this doe s not work
+;; *** server-socket seems to be of class THREAD
+;; *******************************************
+(defmethod close-server ((s server))
+  ;; close the socket for the server.
+  (usocket:socket-close (server-socket s)))
+
 
 
 
