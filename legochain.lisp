@@ -27,8 +27,9 @@
 (deftype payload-type () `(or null
                               (simple-array (unsigned-byte 8))))
 
-
 (defclass bblock ()
+  ;; The blockchain block.
+  ;; We call it "bblock" because there is already a "block" builtin in Common Lisp.
   ((id :initarg :id
        :reader block-id
        :documentation "Id of the current block.")
@@ -165,8 +166,9 @@ this automatically mines a new block with the payload."
 
 (defvar *my-blockchain* nil)
 
-(defun startup ()
-  "Some startup tasks. This erases the in-memory blockchain!"
+(defun start-my-blockchain ()
+  "Some startup tasks. This erases the in-memory blockchain!
+And creates a blank blockchain (well, not blank, it has one block.)"
   ;; compile REGEX
   (unless *regex-difficulty*
     (setf *regex-difficulty*
@@ -273,7 +275,7 @@ is NIL, then the block at that position failed the check."
                      "III. Three"
                      "IV. Four"
                      )))
-    (startup)
+    (start-my-blockchain)
     ;; add strings to blockchain.
     (loop for str in test-data
           do
@@ -307,20 +309,34 @@ is NIL, then the block at that position failed the check."
 ;; Type for the data interchanged between peers.
 (defparameter *el-type* 'character)
 
+;; default host
+(defparameter *default-host* #(127 0 0 1))
+;; default port
+(defparameter *default-port* 6667)
+
+;; The Peers, a list of plists containing keys:
+;; :ip and :port
+(defparameter *peers* (list '(:ip *default-host* :port 6667)))
+
+
 ;; PROTOCOL: --------------------------------------------------
 ;; message is a lisp object (readable string).
 ;; message has the operation symbol, and the data
 (defparameter *operations*
-  '(:get-all    ;obtain complete blockchain from peer
+  '(
+    :request-all ; request complete blockchain from peer
+    :request-all-response ; peer replies with the whole blockchain
     :get-latest ;obtain latest block
-    :show-block ;show recently created block to peers
+    :get-latest-response ; reply containing the latest block
+    :new-block ; this message contains a newly created block
     :hi ; say 'hi (for test purposes)
     ))
-;; the data is a string
+;; the data type
 (deftype encoded-data-type () 'string)
 ;; the data is a string that has passed through these steps:
 ;; 1. convert to byte array using CONSPACK
 ;; 2. convert to hex string using IRONCLAD..
+
 (defun encode-data (obj)
   "Produces encoded string of the desired object."
   (ironclad:byte-array-to-hex-string (conspack:encode obj)))
@@ -334,6 +350,7 @@ is NIL, then the block at that position failed the check."
 (defun send-message-to-stream (operation object to-stream)
   "Create a message to send through the socket, based on operation and the data. This also encodes object to data, using conspack."
   (assert (member operation *operations*))
+  ;; message is: operation . data
   (print `(,operation . ,(encode-data object))
          to-stream))
 
@@ -356,12 +373,83 @@ Returns operation and decoded object."
             (decode-data data))))
 
 
+;; ----------------- CLIENT -----------------------------
+;; Client sends messages to other peers' servers
+
+(defun send (msg data
+             &key (host *default-host*)
+                  (port *default-port*))
+  "Send a message to a specific peer"
+  (let ((socket (usocket:socket-connect host
+                                        port
+                                        :element-type *el-type*
+                                        :timeout 10
+                                        )))
+    ;; send message
+    (send-message-to-stream msg data (usocket:socket-stream socket))
+    ;; now!
+    (force-output (usocket:socket-stream socket))))
+
+(defun connect-to-legochain (&key (host *default-host*)
+                                  (port *default-port*))
+  "Send greetings to a specific peer."
+  (send :hi (format nil "Hello from peer!")
+        :host host
+        :port port))
+
+(defun please-send-me-blockchain (host port)
+  "Send message: Please send me the complete blockchain you have."
+  (send :request-all 
+        ;; the data I send: my host, my port. 
+        (list :host host :port port)
+        :host host
+        :port port))
+
+(defun i-have-a-new-block (host port)
+  "Send to the peer: I have a new block... here it is!"
+  (send :new-block
+        ;; the last block in my blockchain
+        (last-block-on-blockchain *my-blockchain*)
+        :host host
+        :port port))
+
 ;;---------------------- SERVER ------------------------------
+;; Server receives messages and performs actions accordingly.
 
-(defun hi-message-handler (obj stdout)
-  (format stdout "Client says Hi: ~%~A~%" obj))
+(defun hi-message-handler (obj stream)
+  (format stream "Client says Hi. Data: \"~A\"~%" obj))
 
-(defun message-handler (msg stdout)
+(defun request-all-message-handler (obj stream)
+  "Handle the message that requests the entire blockchain."
+  (declare (ignore stream))
+  ;; obj contains the host and the port.
+  (let ((host (getf obj :host))
+        (port (getf obj :port)))
+    ;; reply with a request-all-response message
+    (send :request-all-response ;here's my reply!
+          ;; the whole blockchain
+          *my-blockchain*
+          ;; to the peer that sent that message.
+          :host host
+          :port port
+          )))
+
+(defun request-all-response-message-handler (obj stream)
+  "Handle the message that brings the blockchain from another peer."
+  ;; we validate the blockchain and see if the latest block is newer than ours.
+  (if (and (eql (class-of obj) (find-class 'blockchain)) ; is it a blockchain object?
+           (verify-blockchain obj)
+           (> (block-id (last-block-on-blockchain obj))
+              (block-id (last-block-on-blockchain *my-blockchain*))))
+      ;; allright, we have a newer blockchain.
+      (progn
+        (format stream "Received a newer blochain!~%")
+        ;; installing
+        (setf *my-blockchain* obj))
+      ;; no, blockhain not newer
+      (format stream "Received an invalid or older blockchain: Ignoring.~%")))
+
+(defun message-handler (msg stream)
   "Handle an incoming message."
   ;; message must be a lisp cons...
   (if (typep msg 'cons)   
@@ -369,18 +457,23 @@ Returns operation and decoded object."
       (multiple-value-bind (operation obj)
           (decode-message msg)
         ;; what do we do?
+        ;; dispatch according to the type of operation
         (case operation
-          (:hi (hi-message-handler obj stdout))
+          (:hi (hi-message-handler obj stream))
+          (:request-all
+           (request-all-message-handler obj stream))
           (otherwise
-           (format stdout "Received an unimplemented operation: ~A~%" operation))))
+           (format stream "Received an unimplemented operation: ~A~%" operation))))
       ;; not a good type of msg
-      (format stdout "Invalid data type of message: ~A~% "
+      (format stream "Invalid data type of message: ~A~% "
               (type-of msg))))
 
 
-(defun server-function (stream stdout)
+(defun server-function (stream stdout host port)
   "Function that handles incoming packets."
-  (format stdout "Receiving connection from ~A:~D ~%"
+  (format stdout "~A:~D Receiving connection from ~A:~D ~%"
+          host
+          port
           usocket:*remote-host*
           usocket:*remote-port*)
   (loop
@@ -397,48 +490,17 @@ Returns operation and decoded object."
          (return nil)
          ))))
 
-(defun create-legochain-server (&key (host #(127 0 0 1))
-                                     (port 6667))
+(defun create-legochain-server (&key (host *default-host*)
+                                     (port *default-port*))
   "Create a legochain server using sockets and accept connections on port number X."
   (usocket:socket-server host port
                          ;; server handler function
                          #'server-function 
                          ;; arguments to our function, besides stream.
-                         (list *standard-output*)
+                         (list *standard-output* host port) 
                          :in-new-thread T
                          :multi-threading T
                          :element-type *el-type*))
-
-;; ----------------- CLIENT -----------------------------
-
-(defun connect-to-legochain (&key (host #(127 0 0 1))
-                                  (port 6667))
-  (let ((socket (usocket:socket-connect host
-                                         port
-                                        :element-type *el-type*
-                                        :timeout 10
-                                        )))
-    ;; send hi
-    (send-message-to-stream :hi
-                            (format nil "Hello from peer on ~A port ~A." host port)
-     (usocket:socket-stream socket))
-    (force-output (usocket:socket-stream socket))))
-
-
-(defun send-malicious (&key (host #(127 0 0 1))
-                                  (port 6667))
-  (let ((socket (usocket:socket-connect host
-                                        port
-                                        :element-type *el-type*
-                                        :timeout 10
-                                        )))
-    ;; send unexpected stuff
-    (dotimes (x 5)
-      (print "XXXX" (usocket:socket-stream socket))
-      (force-output (usocket:socket-stream socket))
-      (sleep 1))
-    ))
-
 
 
 
