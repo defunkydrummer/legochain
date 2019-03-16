@@ -320,32 +320,6 @@ is NIL, then the block at that position failed the check."
 ;; default port
 (defparameter *default-port* 6667)
 
-;; Server status (a class)
-(defclass server ()
-  ((host :initarg :host
-         :initform *default-host*
-         :reader server-host
-         :documentation "Vector with IP of this server."
-         :type simple-array)
-   (port :initarg :port
-         :initform *default-port*
-         :reader server-port
-         :documentation "Port of this server."
-         ;; can be an integer from 0 to 65535, we tell Lisp.
-         :type (integer 0 65535))
-   (socket :accessor server-socket
-           :documentation "The socket server of this server."
-           :type usocket:stream-server-usocket)
-   (blockchain :accessor server-blockchain
-               :documentation "The blockchain of this server."
-               :type blockchain)
-   (peers :accessor server-peers
-          :documentation "A list of peers"
-          :type cons))
-  (:documentation "Server status, config, and data."))
-
-
-
 
 ;; PROTOCOL: --------------------------------------------------
 ;; message is a lisp object (readable string).
@@ -401,12 +375,41 @@ Returns operation and decoded object."
             (decode-data data))))
 
 
+;; ----------------- STATUS -----------------------------
+;; Server status (a class)
+;; This contains the status of our server
+
+(defclass server ()
+  ((host :initarg :host
+         :initform *default-host*
+         :reader server-host
+         :documentation "Vector with IP of this server."
+         :type simple-array)
+   (port :initarg :port
+         :initform *default-port*
+         :reader server-port
+         :documentation "Port of this server."
+         ;; can be an integer from 0 to 65535, we tell Lisp.
+         :type (integer 0 65535))
+   (socket :accessor server-socket
+           :documentation "The socket server of this server."
+           :type usocket:stream-server-usocket)
+   (thread :accessor server-thread
+           :documentation "The thread where the server runs.")
+   (blockchain :accessor server-blockchain
+               :documentation "The blockchain of this server."
+               :type blockchain)
+   (peers :accessor server-peers
+          :documentation "A list of peers"
+          :type cons))
+  (:documentation "Server status, config, and data."))
+
+
+
 ;; ----------------- CLIENT -----------------------------
 ;; Client sends messages to other peers' servers
 
-(defun send (msg data
-             &key (host *default-host*)
-                  (port *default-port*))
+(defun send (msg data host port)
   "Send a message to a specific peer"
   (let ((socket (usocket:socket-connect host
                                         port
@@ -422,24 +425,24 @@ Returns operation and decoded object."
                                   (port *default-port*))
   "Send greetings to a specific peer."
   (send :hi (format nil "Hello from peer!")
-        :host host
-        :port port))
+        host
+        port))
 
-(defun please-send-me-blockchain (host port)
+(defun please-send-me-blockchain (host port server)
   "Send message: Please send me the complete blockchain you have."
   (send :request-all 
         ;; the data I send: my host, my port. 
-        (list :host host :port port)
-        :host host
-        :port port))
+        (list :host (server-host server) :port (server-port server))
+        host
+        port))
 
 (defun i-have-a-new-block (host port)
   "Send to the peer: I have a new block... here it is!"
   (send :new-block
         ;; the last block in my blockchain
         (last-block-on-blockchain *my-blockchain*)
-        :host host
-        :port port))
+        host
+        port))
 
 ;;---------------------- SERVER ------------------------------
 ;; Server receives messages and performs actions accordingly.
@@ -447,37 +450,50 @@ Returns operation and decoded object."
 (defun hi-message-handler (obj stream)
   (format stream "Client says Hi. Data: \"~A\"~%" obj))
 
-(defun request-all-message-handler (obj stream)
+(defun request-all-message-handler (obj stream server)
   "Handle the message that requests the entire blockchain."
-  (declare (ignore stream))
   ;; obj contains the host and the port.
   (let ((host (getf obj :host))
         (port (getf obj :port)))
     ;; reply with a request-all-response message
-    (send :request-all-response ;here's my reply!
-          ;; the whole blockchain
-          *my-blockchain*
-          ;; to the peer that sent that message.
-          :host host
-          :port port
-          )))
+    (when (and host port)
+      (format stream "Remote peer ~A : ~D wants my blochain.~%" host port)
+      (send :request-all-response ;here's my reply!
+            ;; the whole blockchain
+            (server-blockchain server)
+            ;; to the peer that sent that message.
+            host
+            port
+            ))))
 
-(defun request-all-response-message-handler (obj stream)
+(defun request-all-response-message-handler (obj stream server)
   "Handle the message that brings the blockchain from another peer."
   ;; we validate the blockchain and see if the latest block is newer than ours.
-  (if (and (eql (class-of obj) (find-class 'blockchain)) ; is it a blockchain object?
-           (verify-blockchain obj)
-           (> (block-id (last-block-on-blockchain obj))
-              (block-id (last-block-on-blockchain *my-blockchain*))))
-      ;; allright, we have a newer blockchain.
-      (progn
-        (format stream "Received a newer blochain!~%")
-        ;; installing
-        (setf *my-blockchain* obj))
-      ;; no, blockhain not newer
-      (format stream "Received an invalid or older blockchain: Ignoring.~%")))
+  ;; here we'll use the shortcutting AND operator to circumvent
+  ;; the need for a lot of nested IFs
+  (let* ((is-blockchain                 ; is it a blockchain object? 
+           (eql (class-of obj)
+                (find-class 'blockchain))) 
+         (is-verified       ; is it a blockchain object, and verified?
+           (and is-blockchain (verify-blockchain obj)))
+         (has-newer-block       ; is it a blockchain object, verified, and has a higher block id?
+           (and is-verified
+                (> (block-id (last-block-on-blockchain obj))
+                   (block-id (last-block-on-blockchain (server-blockchain server)))))))
+    ;; print message according to each failed validation
+    ;; we use the "shortcutting" operator or
+    (or is-blockchain (format stream "Not a blockchain!~%"))
+    (or is-verified (format stream "Received invalid blockchain!~%"))
+    (or has-newer-block (format stream "Blockchain is not longer than ours.~%"))
+    ;; if all is verified
+    (if has-newer-block
+        ;; allright, we have a newer blockchain.
+        (progn
+          (format stream "Received a newer blochain!~%")
+          ;; installing in our server as the new blockchain
+          (setf (server-blockchain server) obj)))))
 
-(defun message-handler (msg stream)
+(defun message-handler (msg stream server)
   "Handle an incoming message."
   ;; message must be a lisp cons...
   (if (typep msg 'cons)   
@@ -489,7 +505,9 @@ Returns operation and decoded object."
         (case operation
           (:hi (hi-message-handler obj stream))
           (:request-all
-           (request-all-message-handler obj stream))
+           (request-all-message-handler obj stream server))
+          (:request-all-response
+           (request-all-response-message-handler obj stream server))
           (otherwise
            (format stream "Received an unimplemented operation: ~A~%" operation))))
       ;; not a good type of msg
@@ -497,56 +515,48 @@ Returns operation and decoded object."
               (type-of msg))))
 
 
-(defun server-function (stream stdout host port)
+(defun server-function (stream stdout server)
   "Function that handles incoming packets."
-  (format stdout "~A:~D Receiving connection from ~A:~D ~%"
-          host
-          port
+  (format stdout "Myself on ~A:~D receiving connection from ~A:~D ~%"
+          (server-host server)
+          (server-port server)
           usocket:*remote-host*
           usocket:*remote-port*)
-  (loop
-    for o = (read stream nil 'eof)
-    do
+  (let ((o (read stream nil 'eof))) ; what we got from the stream
     (cond
       ((eql o 'eof) (format stdout "EOF!"))
       (t (format stdout "Received object: ~A~%" o)
          ;; handle the message
-         (message-handler o stdout)
-         
-         ;; exit our server function.
-         ;; that means we don't read further messages.
-         (return nil)
+         (message-handler o stdout server)
          ))))
 
 (defun create-legochain-server (&key (host *default-host*)
                                      (port *default-port*))
   "Create a legochain server using sockets and accept connections on port number X. Return the server object... "
-  (let ((server (make-instance 'server
-                               :host host
-                               :port port)))
+  (let ((s (make-instance 'server
+                          :host host
+                          :port port)))
     ;; create a blank blockchain
-    (with-slots (blockchain socket) server
-      (setf blockchain (start-my-blockchain))
-      ;; start the socket server 
-      (setf socket
-            (usocket:socket-server host port
-                                   ;; server handler function
-                                   #'server-function 
-                                   ;; arguments to our function, besides stream:
-                                   ;; stdout and my server object
-                                   (list *standard-output* host port server) 
-                                   :in-new-thread T
-                                   :multi-threading T
-                                   :element-type *el-type*)))
+    (setf (server-blockchain s) (start-my-blockchain))
+    ;; get the two different values obtained from calling usocket:socket-server
+    (multiple-value-bind (thread socket)
+        (usocket:socket-server host port
+                               ;; server handler function
+                               #'server-function 
+                               ;; arguments to our function, besides stream:
+                               ;; stdout and my server object
+                               (list *standard-output* s) 
+                               :in-new-thread T ;IMPORTANT!
+                               :multi-threading nil ; don't open a thread for every incoming packet.
+                               :element-type *el-type*)
+      (setf (server-thread s) thread
+            (server-socket s) socket))
     ;; return the server object
-    server
+    s
     ))
 
-;; ************ this doe s not work
-;; *** server-socket seems to be of class THREAD
-;; *******************************************
 (defmethod close-server ((s server))
-  ;; close the socket for the server.
+  (portable-threads:kill-thread (server-thread s))
   (usocket:socket-close (server-socket s)))
 
 
