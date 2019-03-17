@@ -19,20 +19,21 @@
            :documentation "The blockchain itself, a list of blocks."))
   (:documentation "A blockchain."))
 
-
-(defparameter *dummy-value*
-  (conspack:encode "This block has a dummy value. Congratulations!"))
+;; The data that the first (initial or "genesis") block will carry.
+(defparameter *initial-block-data*
+  ;; homage to bitcoin's 1st block
+  (conspack:encode "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks"))
 
 ;; data type of our payloads...
-(deftype payload-type () `(or null
-                              (simple-array (unsigned-byte 8))))
+(deftype payload-type () '(simple-array (unsigned-byte 8)))
 
 (defclass bblock ()
   ;; The blockchain block.
   ;; We call it "bblock" because there is already a "block" builtin in Common Lisp.
   ((id :initarg :id
        :reader block-id
-       :documentation "Id of the current block.")
+       :documentation "Id of the current block."
+       :type integer)
    (previous-hash :initarg :previous-hash
                   :reader block-previous-hash
                   :type string)
@@ -43,7 +44,6 @@
    (nonce-value :initarg :nonce-value
                 :documentation "Nonce value for this block.")
    (payload :initarg :payload
-            :initform *dummy-value*
             :reader block-payload
             :documentation "The block's usable (payload) data."
             :type payload-type))
@@ -56,6 +56,7 @@
 ;; how to encode the blockchain
 (conspack:defencoding blockchain
   blocks)
+
 
 (defmethod encode-block ((b bblock))
   (conspack:encode b))
@@ -78,6 +79,14 @@
 (defmethod last-block-on-blockchain ((chain blockchain))
   (with-slots (blocks) chain
     (first blocks))) ;latest
+
+(defmethod get-block-by-index ((chain blockchain) (index integer))
+  "Get block by index on the blockchain, starting with 0 = initial block.
+NOTE: Assumes the blockchain has been verified."
+   (with-slots (blocks) chain
+    (elt blocks
+         ;; note tha the blocks are in reverse order, because they are pushed.
+         (- (length blocks) index 1))))
 
 ;; compute hash for the block
 (defmethod compute-hash ((b bblock))
@@ -146,8 +155,8 @@ That is, a block that satisfies the difficulty/challenge."
 ;; ---------------------------------------------------------------------
 
 (defmethod add-data-to-blockchain ((chain blockchain)
-                                  payload)
-  "Add data to the blockchain. 
+                                   (payload simple-array))
+  "Add payload to the blockchain. 
 this automatically mines a new block with the payload."
   (declare (type payload-type payload))
   ;; get the id of the last object, the hash, etc
@@ -164,11 +173,16 @@ this automatically mines a new block with the payload."
       (push-block-to-blockchain new chain))))
 
 
+(defmethod add-data-to-blockchain ((chain blockchain)
+                                   (s string))
+  "Add string to the blockchain. It will be encoded."
+  (add-data-to-blockchain chain (encode-payload s)))
+
 (defvar *my-blockchain* nil)
 
-(defun start-my-blockchain ()
+(defun start-my-blockchain (&optional (blank T))
   "Some startup tasks.
-And creates a blank blockchain (well, not blank, it has one block.)"
+And creates a blank blockchain (unless blank = null)"
   ;; compile REGEX
   (unless *regex-difficulty*
     (setf *regex-difficulty*
@@ -178,11 +192,12 @@ And creates a blank blockchain (well, not blank, it has one block.)"
   ;; new blockchain
   (let ((b (make-instance 'blockchain)))
     ;; my blockchain needs a new block... the first block
-    (push-block-to-blockchain (mine-new-block  
-                               :previous-hash nil
-                               :payload *dummy-value*
-                               :id 0)
-                              b)
+    (unless blank
+      (push-block-to-blockchain (mine-new-block  
+                                 :previous-hash nil
+                                 :payload *initial-block-data*
+                                 :id 0)
+                                b))
     ;; return it
     b
     ))
@@ -215,27 +230,50 @@ Requires the previous block."
        )))
 
 
-(defmethod verify-blockchain ((chain blockchain))
+(defmethod verify-blocks ((chain blockchain))
   "Check that all blocks comply the rules of the blockchain..
 Returns array where all should be T. If an element at the array
 is NIL, then the block at that position failed the check."
   (let ((blocks (blockchain-blocks chain)))
-     (maplist ;; applies successive CDR to the blocks list
-      (lambda (blocklist)
-        ;; The rules...
-        ;; verification of the list of blocks
-        ;; each block is verified against the previous.
-        (let  ((head (first blocklist))
-               (previous (second blocklist)))
-          (complies-with-rules-of-the-blockchain head previous)))
-      blocks)))
+    (maplist ;; applies successive CDR to the blocks list
+     (lambda (blocklist)
+       ;; The rules...
+       ;; verification of the list of blocks
+       ;; each block is verified against the previous.
+       (let  ((head (first blocklist))
+              (previous (second blocklist)))
+         (complies-with-rules-of-the-blockchain head previous)))
+     blocks)
+    ))
 
-(defmethod verify-blockchain-p ((chain blockchain))
-  "Similar to verify-blockchain but limits the reply to either T or NIL."
-  (every (lambda (x) (and x T))
-         (verify-blockchain chain)))
+(defmethod blockchain-ok ((chain blockchain))
+  "Applies verify-blocks and gives either T or NIL T = all blocks are OK."
+  (if (blockchain-blocks chain)
+      (every (lambda (x) (and x T))
+             (verify-blocks chain))
+      ;; else: there are no blocks --> chain is OK too.
+      T
+      ))
 
 
+(defmethod verify-blockchain-against ((my-chain blockchain)
+                                      (other-chain blockchain))
+  "Verify my blockchain against a potential longer blockchain."
+  (when (blockchain-ok other-chain)
+    (let ((last-mine (last-block-on-blockchain my-chain))
+          (last-other (last-block-on-blockchain other-chain)))
+      (when (< (block-id last-mine)
+               (block-id last-other))
+        ;; the other chain has a longer block.
+        ;; check that the hash of my last block
+        ;; is equal to the "previous-hash" of the
+        ;; next block in the other chain
+        
+        (let ((their-next-block
+                (get-block-by-index other-chain
+                                    (1+ (block-id last-mine)))))
+          (eql (block-previous-hash their-next-block)
+               (compute-hash last-mine)))))))
 
 ;;-------------------------------------------------------------------
 
@@ -278,7 +316,7 @@ is NIL, then the block at that position failed the check."
                      "III. Three"
                      "IV. Four"
                      ))
-        (chain (start-my-blockchain)))
+        (chain (start-my-blockchain nil))) ;non-blank
     
     ;; add strings to blockchain.
     (loop for str in test-data
@@ -286,7 +324,7 @@ is NIL, then the block at that position failed the check."
           (add-data-to-blockchain chain
                                   (encode-payload str)))
     ;; verify blockchain
-    (assert (verify-blockchain-p chain))
+    (assert (blockchain-ok chain))
     ;;compare payloads with original str
     ;;note: payloads are in reverse order than original test-data.
     ;;note: ignore initial block.
@@ -471,27 +509,44 @@ Returns operation and decoded object."
   ;; we validate the blockchain and see if the latest block is newer than ours.
   ;; here we'll use the shortcutting AND operator to circumvent
   ;; the need for a lot of nested IFs
-  (let* ((is-blockchain                 ; is it a blockchain object? 
-           (eql (class-of obj)
-                (find-class 'blockchain))) 
-         (is-verified       ; is it a blockchain object, and verified?
-           (and is-blockchain (verify-blockchain obj)))
-         (has-newer-block       ; is it a blockchain object, verified, and has a higher block id?
-           (and is-verified
-                (> (block-id (last-block-on-blockchain obj))
-                   (block-id (last-block-on-blockchain (server-blockchain server)))))))
-    ;; print message according to each failed validation
-    ;; we use the "shortcutting" operator or
-    (or is-blockchain (format stream "Not a blockchain!~%"))
-    (or is-verified (format stream "Received invalid blockchain!~%"))
-    (or has-newer-block (format stream "Blockchain is not longer than ours.~%"))
-    ;; if all is verified
-    (if has-newer-block
-        ;; allright, we have a newer blockchain.
-        (progn
-          (format stream "Received a newer blochain!~%")
-          ;; installing in our server as the new blockchain
-          (setf (server-blockchain server) obj)))))
+  (let*
+      ((is-blockchain                   ; is it a blockchain object? 
+         (eql (class-of obj)
+              (find-class 'blockchain)))        (is-verified         ; is it a blockchain object, and verified?
+         (and is-blockchain (blockchain-ok obj)))
+       (last-block-there (last-block-on-blockchain obj))
+       (last-block-here (last-block-on-blockchain (server-blockchain server))))
+
+    ;; handle scenarios where one of the chains is blank
+    (cond
+      ((null last-block-there) (format stream "Received blank blockchain.~%"))
+      ((null last-block-here) ;; we are empty
+       ;; install in our server as the new blockchain
+       (when is-verified
+         (format stream "Received a blockchain and we have no blocks. Installing.~%")
+         (setf (server-blockchain server) obj)))
+      (t                      ; case when both blockchain have blocks!
+       (let* ((has-newer-block ; is it a blockchain object, verified, and has a higher block id?
+                (and is-verified
+                     (> (block-id last-block-there)
+                        (block-id last-block-here))))
+              ;; verify that my shorter chain is contained in 
+              ;; the longer chain
+              (makes-sense
+                (and has-newer-block
+                     (verify-blockchain-against (server-blockchain server) obj))))
+         ;; print message according to each failed validation.
+         
+         (cond
+           ((not is-blockchain) (format stream "Not a blockchain!~%"))
+           ((not is-verified) (format stream "Received invalid blockchain!~%"))
+           ((not has-newer-block) (format stream "Blockchain is not longer than ours.~%"))
+           ((not makes-sense) (format stream "Blockchain doesn't contain mine. FRAUD! ~%"))
+           ;; all checks passed
+           (t (format stream "Received a longer blochain!~%")
+              ;; installing in our server as the new blockchain
+              (setf (server-blockchain server) obj))))
+       ))))
 
 (defun message-handler (msg stream server)
   "Handle an incoming message."
@@ -531,13 +586,16 @@ Returns operation and decoded object."
          ))))
 
 (defun create-legochain-server (&key (host *default-host*)
-                                     (port *default-port*))
-  "Create a legochain server using sockets and accept connections on port number X. Return the server object... "
+                                     (port *default-port*)
+                                     (blank-blockchain T))
+  "Create a legochain server using sockets and accept connections on port number X. Return the server object... 
+By default the server has a blank blockchain"
   (let ((s (make-instance 'server
                           :host host
                           :port port)))
     ;; create a blank blockchain
-    (setf (server-blockchain s) (start-my-blockchain))
+    (setf (server-blockchain s)
+          (start-my-blockchain blank-blockchain))
     ;; get the two different values obtained from calling usocket:socket-server
     (multiple-value-bind (thread socket)
         (usocket:socket-server host port
@@ -560,6 +618,27 @@ Returns operation and decoded object."
   (usocket:socket-close (server-socket s)))
 
 
+;; --------------- test servers- -----
 
+(defun servers-test (port1 port2)
+  (let ((s1 (create-legochain-server :port port1
+                                     :blank-blockchain T))
+        (s2 (create-legochain-server :port port2
+                                     :blank-blockchain nil)))
+    ;; s1 asks s2 for its (longer) blockchain
+    (please-send-me-blockchain *default-host*
+                               7002
+                               s1)
+    ;; now again
+    (please-send-me-blockchain *default-host*
+                               7002
+                               s1)
+    ;; now s2 asks s1
+    (please-send-me-blockchain *default-host*
+                               7001
+                               s2)
 
+    (close-server s1)
+    (close-server s2)
+    ))
 

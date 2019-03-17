@@ -3,8 +3,7 @@
   :maintainer "Flavio Egoavil <f_egoavil@hotmail.com>"
   :license "MIT"
   :version "0.1"
-  :depends-on (#:alexandria
-               #:cl-ppcre
+  :depends-on (#:cl-ppcre
                #:cl-conspack
                #:ironclad
                #:bt-semaphore
