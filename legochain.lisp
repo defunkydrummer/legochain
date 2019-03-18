@@ -449,12 +449,12 @@ Returns operation and decoded object."
 
 (defun send (msg data host port)
   "Send a message to a specific peer"
-  (let ((socket (usocket:socket-connect host
-                                        port
-                                        :element-type *el-type*
-                                        :timeout 10
-                                        )))
-    ;; send message
+  (usocket:with-connected-socket
+      (socket (usocket:socket-connect host
+                                      port
+                                      :element-type *el-type*
+                                      :timeout 10 ;doesn't work on windows
+                                      ))
     (send-message-to-stream msg data (usocket:socket-stream socket))
     ;; now!
     (force-output (usocket:socket-stream socket))))
@@ -605,7 +605,8 @@ By default the server has a blank blockchain"
                                ;; stdout and my server object
                                (list *standard-output* s) 
                                :in-new-thread T ;IMPORTANT!
-                               :multi-threading nil ; don't open a thread for every incoming packet.
+                               :multi-threading T ; 
+                               ;; *********** NEEDS LOCKL FOR SERVER OBJECT HERE *****
                                :element-type *el-type*)
       (setf (server-thread s) thread
             (server-socket s) socket))
@@ -627,16 +628,19 @@ By default the server has a blank blockchain"
                                      :blank-blockchain nil)))
     ;; s1 asks s2 for its (longer) blockchain
     (please-send-me-blockchain *default-host*
-                               7002
+                               port2
                                s1)
+    (sleep 0.5)
     ;; now again
     (please-send-me-blockchain *default-host*
-                               7002
+                               port2
                                s1)
+    (sleep 0.5)
     ;; now s2 asks s1
     (please-send-me-blockchain *default-host*
-                               7001
+                               port1
                                s2)
+    (sleep 0.5)
 
     (close-server s1)
     (close-server s2)
