@@ -36,7 +36,7 @@
        :type integer)
    (previous-hash :initarg :previous-hash
                   :reader block-previous-hash
-                  :type string)
+                  :type (or string null))
    ;; (this-hash :initarg this-hash
    ;;            :documentation "Hash value of the current block.")
    (timestamp :initarg :timestamp
@@ -178,8 +178,6 @@ this automatically mines a new block with the payload."
   "Add string to the blockchain. It will be encoded."
   (add-data-to-blockchain chain (encode-payload s)))
 
-(defvar *my-blockchain* nil)
-
 (defun start-my-blockchain (&optional (blank T))
   "Some startup tasks.
 And creates a blank blockchain (unless blank = null)"
@@ -281,15 +279,16 @@ is NIL, then the block at that position failed the check."
 ;; misc test / helper
 
 ;;show all blockchain
-(defun show-blockchain (chain)
-  (mapcar (lambda (b)
-            (mapcar
-             (lambda (slot-name)
-               (list slot-name
-                     (slot-value b slot-name)))
-             (mapcar #'sb-mop:slot-definition-name
-                     (sb-mop:class-slots (class-of b)))))
-          (blockchain-blocks chain)))
+;; #+sbcl
+;; (defun show-blockchain (chain)
+;;   (mapcar (lambda (b)
+;;             (mapcar
+;;              (lambda (slot-name)
+;;                (list slot-name
+;;                      (slot-value b slot-name)))
+;;              (mapcar #'sb-mop:slot-definition-name
+;;                      (sb-mop:class-slots (class-of b)))))
+;;           (blockchain-blocks chain)))
 
 (defun add-stuff (chain)
   "Add test blocks to blockchain."
@@ -447,17 +446,29 @@ Returns operation and decoded object."
 ;; ----------------- CLIENT -----------------------------
 ;; Client sends messages to other peers' servers
 
-(defun send (msg data host port)
-  "Send a message to a specific peer"
-  (usocket:with-connected-socket
-      (socket (usocket:socket-connect host
-                                      port
-                                      :element-type *el-type*
-                                      :timeout 10 ;doesn't work on windows
-                                      ))
-    (send-message-to-stream msg data (usocket:socket-stream socket))
-    ;; now!
-    (force-output (usocket:socket-stream socket))))
+(defun send (msg data host port &optional (retries 2)
+                                          (sleep 1))
+  "Send a message to a specific peer.
+Retries: Number of times to try again if connection is refused...
+Sleep: time to sleep before retry."
+  (handler-case
+      (usocket:with-connected-socket
+          (socket (usocket:socket-connect host
+                                          port
+                                          :element-type *el-type*
+                                          :timeout 10 ;doesn't work on windows
+                                          ))
+        (send-message-to-stream msg data (usocket:socket-stream socket))
+        ;; now!
+        (force-output (usocket:socket-stream socket)))
+    ;; if can't connect
+    (usocket:connection-refused-error (e)
+      (declare (ignore e))
+      (when (> retries 0)
+          ;; wait...
+        (sleep sleep)
+        ;; try again
+        (send msg data host port (1- retries) sleep)))))
 
 (defun connect-to-legochain (&key (host *default-host*)
                                   (port *default-port*))
@@ -474,11 +485,10 @@ Returns operation and decoded object."
         host
         port))
 
-(defun i-have-a-new-block (host port)
+(defun i-have-a-new-block (host port block)
   "Send to the peer: I have a new block... here it is!"
   (send :new-block
-        ;; the last block in my blockchain
-        (last-block-on-blockchain *my-blockchain*)
+        block
         host
         port))
 
@@ -605,8 +615,7 @@ By default the server has a blank blockchain"
                                ;; stdout and my server object
                                (list *standard-output* s) 
                                :in-new-thread T ;IMPORTANT!
-                               :multi-threading T ; 
-                               ;; *********** NEEDS LOCKL FOR SERVER OBJECT HERE *****
+                               :multi-threading nil ;no thread for each request 
                                :element-type *el-type*)
       (setf (server-thread s) thread
             (server-socket s) socket))
@@ -630,19 +639,20 @@ By default the server has a blank blockchain"
     (please-send-me-blockchain *default-host*
                                port2
                                s1)
-    (sleep 0.5)
+    ;(sleep 0.5)
     ;; now again
     (please-send-me-blockchain *default-host*
                                port2
                                s1)
-    (sleep 0.5)
+    ;(sleep 0.5)
     ;; now s2 asks s1
     (please-send-me-blockchain *default-host*
                                port1
                                s2)
-    (sleep 0.5)
+
+    (sleep 10) ;before closing the server...
 
     (close-server s1)
     (close-server s2)
-    ))
+    (list s1 s2)))
 
