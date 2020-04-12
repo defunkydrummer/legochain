@@ -8,7 +8,8 @@
                #:ironclad
                #:bt-semaphore
                #:usocket
-               #:usocket-server) 
+               #:usocket-server
+               #:portable-threads) 
   :serial T
   :components ((:file "legochain"))
   :description  "Toy blockchain by defunkydrummer (flavio).")
