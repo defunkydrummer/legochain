@@ -12,6 +12,7 @@
 
 (in-package :legochain)
 
+;; Our blockchain.
 (defclass blockchain ()
   ((blocks :initarg :blocks
            :initform nil
@@ -29,7 +30,6 @@
 
 (defclass bblock ()
   ;; The blockchain block.
-  ;; We call it "bblock" because there is already a "block" builtin in Common Lisp.
   ((id :initarg :id
        :reader block-id
        :documentation "Id of the current block."
@@ -57,30 +57,45 @@
 (conspack:defencoding blockchain
   blocks)
 
+;; generic functions for encoding and decoding stuff
+(defgeneric encode (x))
+(defgeneric decode (x))
 
-(defmethod encode-block ((b bblock))
+;; how to encode and decode the block 
+(defmethod encode ((b bblock))
   (conspack:encode b))
 
-(defun decode-block (bytestream)
-  (conspack:decode bytestream))
-
-(defmethod encode-blockchain ((b blockchain))
+;; encode a blockchain
+(defmethod encode ((b blockchain))
   (conspack:encode b))
 
-(defun decode-blockchain (bytestream)
+;; encodes payload data so it can be stored on a block.
+(defmethod encode ((payload-data sequence))
+  (conspack:encode payload-data))
+
+;; this decodes any bytestream into a block or blockchain depending on what
+;; we give to conspack
+(defmethod decode ((bytestream sequence))
   (conspack:decode bytestream))
 
-(defmethod push-block-to-blockchain ((the-block bblock) (chain blockchain))
+;; decode a block: decodes the payload for a block
+(defmethod decode ((b bblock))
+  (with-slots (payload) b
+    (conspack:decode payload)))
+
+;; push a block to the blockchain
+(defmethod push-block ((the-block bblock) (chain blockchain))
   (with-slots (blocks) chain
     ;; just push the block!
     (push the-block blocks)))
 
 ;; the last (recent) block on the chain
-(defmethod last-block-on-blockchain ((chain blockchain))
+(defmethod last-block ((chain blockchain))
   (with-slots (blocks) chain
     (first blocks))) ;latest
 
-(defmethod get-block-by-index ((chain blockchain) (index integer))
+;; get a block from the blockchain, by index
+(defmethod get-block ((chain blockchain) (index integer))
   "Get block by index on the blockchain, starting with 0 = initial block.
 NOTE: Assumes the blockchain has been verified."
    (with-slots (blocks) chain
@@ -94,14 +109,6 @@ NOTE: Assumes the blockchain has been verified."
    (ironclad:digest-sequence :sha256
                              (encode-block b))))
 
-;; decode the payload for a block
-(defmethod decode-payload ((b bblock))
-  (with-slots (payload) b
-    (conspack:decode payload)))
-
-(defun encode-payload (payload-data)
-  "Encode the payload so it can be stored on a block."
-  (conspack:encode payload-data))
 
 
 ;; -------------------------- BLOCK MINING -----------------------
@@ -146,21 +153,19 @@ That is, a block that satisfies the difficulty/challenge."
                            ))
       (incf nonce-value)
       ;; compute hash until it complies with target challenge.
-      :until (hash-complies-with-difficulty
-             (compute-hash b)))
+      :until (hash-complies-with-difficulty (compute-hash b)))
     ;;and we return the block thus mined
-    b
-    ))
+    b))
 
 ;; ---------------------------------------------------------------------
 
-(defmethod add-data-to-blockchain ((chain blockchain)
-                                   (payload simple-array))
+(defmethod add-data ((chain blockchain) (payload sequence))
   "Add payload to the blockchain. 
 this automatically mines a new block with the payload."
+  ;; enforce specific payload type
   (declare (type payload-type payload))
   ;; get the id of the last object, the hash, etc
-  (let* ((recent-block (last-block-on-blockchain chain))
+  (let* ((recent-block (last-block chain))
          (last-id (block-id recent-block))
          (last-hash (compute-hash recent-block)))
     ;; mine new block !
@@ -170,13 +175,12 @@ this automatically mines a new block with the payload."
              :payload payload
              :id (1+ last-id)))) ;with an ID that is superior to the last one.
       ;; add this new block to the blockchain
-      (push-block-to-blockchain new chain))))
+      (push-block new chain))))
 
 
-(defmethod add-data-to-blockchain ((chain blockchain)
-                                   (s string))
+(defmethod add-data ((chain blockchain) (s string))
   "Add string to the blockchain. It will be encoded."
-  (add-data-to-blockchain chain (encode-payload s)))
+  (add-data chain (encode-payload s)))
 
 (defun start-my-blockchain (&optional (blank T))
   "Some startup tasks.
@@ -197,62 +201,61 @@ And creates a blank blockchain (unless blank = null)"
                                  :id 0)
                                 b))
     ;; return it
-    b
-    ))
+    b))
 
 
 
 ;; ----------------------- blockchain verification ----------------
-(defun complies-with-rules-of-the-blockchain (head previous)
+(defmethod complies-with-rules ((head bblock) (previous bblock))
   "T if the block complies with the rules of the blockchain. 
 Requires the previous block."
-  (declare (type bblock head)
-           (type (or null bblock) previous))
-  (or (null previous)         ; no previous block
-      ;; if there is a previous block:
-      (and 
-       ;; hash of previous block equals previous-hash of current block
-       (string= (block-previous-hash head)
-                (compute-hash previous))
-       ;; timestamps are consecutive
-       ;; note: >= because (get-universal-time) only is precise to seconds.
-       (>= (block-timestamp head)
-           (block-timestamp previous))
-       ;; ids are consecutive
-       (> (block-id head)
-          (block-id previous))
-       ;; hash complies with challenge
-       (hash-complies-with-difficulty (compute-hash head))
-       ;; T here only so the AND block returns either T or NIL
-       T
-       )))
+  (and 
+   ;; hash of previous block equals previous-hash of current block
+   (string= (block-previous-hash head)
+            (compute-hash previous))
+   ;; timestamps are consecutive
+   ;; note: >= because (get-universal-time) only is precise to seconds.
+   (>= (block-timestamp head)
+       (block-timestamp previous))
+   ;; ids are consecutive
+   (> (block-id head)
+      (block-id previous))
+   ;; hash complies with challenge
+   (hash-complies-with-difficulty (compute-hash head))
+   ;; T here only so the AND block returns either T or NIL
+   T
+   ))
 
+(defmethod complies-with-rules ((head bblock) (previous null))
+  ;; If there's no previous block, the rules are OK.
+  T)
 
-(defmethod verify-blocks ((chain blockchain))
+(defmethod verify ((chain blockchain))
   "Check that all blocks comply the rules of the blockchain..
-Returns array where all should be T. If an element at the array
-is NIL, then the block at that position failed the check."
-  (let ((blocks (blockchain-blocks chain)))
-    (maplist ;; applies successive CDR to the blocks list
-     (lambda (blocklist)
-       ;; The rules...
-       ;; verification of the list of blocks
-       ;; each block is verified against the previous.
-       (let  ((head (first blocklist))
-              (previous (second blocklist)))
-         (complies-with-rules-of-the-blockchain head previous)))
-     blocks)
-    ))
 
-(defmethod blockchain-ok ((chain blockchain))
-  "Applies verify-blocks and gives either T or NIL T = all blocks are OK."
+Returns: T if all is OK.
+
+Also returns (as a secondary value): 
+  list where all should be T. If an element at the array
+  is NIL, then the block at that position failed the check."
   (if (blockchain-blocks chain)
-      (every (lambda (x) (and x T))
-             (verify-blocks chain))
-      ;; else: there are no blocks --> chain is OK too.
-      T
-      ))
-
+      (let ((individual-verifications
+              (maplist        ; maplist: applies successive CDR to the blocks list
+               ;; apply this function...
+               (lambda (blocklist)
+                 ;; each block is verified against the previous.
+                 (complies-with-rules (first blocklist)
+                                      (second blocklist)))
+               ;; ...over the blocks of the chain
+               (blockchain-blocks chain))))
+        ;; return values: primary and secondary
+        (values
+         ;; 1. true if all individual verifications are true (T)
+         (not (some #'null individual-verifications))
+         ;; 2. the individual results
+         individual-verifications))
+      ;; else: there are no blocks, return T (ok) and an empty list
+      (values T ())))
 
 (defmethod verify-blockchain-against ((my-chain blockchain)
                                       (other-chain blockchain))
