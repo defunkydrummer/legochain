@@ -12,6 +12,8 @@
 
 (in-package :legochain)
 
+(declaim (optimize (debug 3) (speed 0 )))
+
 ;; Our blockchain.
 (defclass blockchain ()
   ((blocks :initarg :blocks
@@ -107,7 +109,7 @@ NOTE: Assumes the blockchain has been verified."
 (defmethod compute-hash ((b bblock))
   (ironclad:byte-array-to-hex-string 
    (ironclad:digest-sequence :sha256
-                             (encode-block b))))
+                             (encode b))))
 
 
 
@@ -180,7 +182,7 @@ this automatically mines a new block with the payload."
 
 (defmethod add-data ((chain blockchain) (s string))
   "Add string to the blockchain. It will be encoded."
-  (add-data chain (encode-payload s)))
+  (add-data chain (encode s)))
 
 (defun start-my-blockchain (&optional (blank T))
   "Some startup tasks.
@@ -195,7 +197,7 @@ And creates a blank blockchain (unless blank = null)"
   (let ((b (make-instance 'blockchain)))
     ;; my blockchain needs a new block... the first block
     (unless blank
-      (push-block-to-blockchain (mine-new-block  
+      (push-block (mine-new-block  
                                  :previous-hash nil
                                  :payload *initial-block-data*
                                  :id 0)
@@ -257,12 +259,11 @@ Also returns (as a secondary value):
       ;; else: there are no blocks, return T (ok) and an empty list
       (values T ())))
 
-(defmethod verify-blockchain-against ((my-chain blockchain)
-                                      (other-chain blockchain))
+(defmethod verify-against ((my-chain blockchain) (other-chain blockchain))
   "Verify my blockchain against a potential longer blockchain."
-  (when (blockchain-ok other-chain)
-    (let ((last-mine (last-block-on-blockchain my-chain))
-          (last-other (last-block-on-blockchain other-chain)))
+  (when (verify other-chain)
+    (let ((last-mine (last-block my-chain))
+          (last-other (last-block other-chain)))
       (when (< (block-id last-mine)
                (block-id last-other))
         ;; the other chain has a longer block.
@@ -271,8 +272,8 @@ Also returns (as a secondary value):
         ;; next block in the other chain
         
         (let ((their-next-block
-                (get-block-by-index other-chain
-                                    (1+ (block-id last-mine)))))
+                (get-block  other-chain
+                            (1+ (block-id last-mine)))))
           (eql (block-previous-hash their-next-block)
                (compute-hash last-mine)))))))
 
@@ -300,14 +301,14 @@ Also returns (as a secondary value):
                      "Yet another block"
                      "WOW, blockchains are cool")
         do
-        (add-data-to-blockchain
+        (add-data
          chain
-         (encode-payload str))))
+         (encode str))))
 
 (defun list-payloads (chain)
   "Show all payloads (decoded)"
   (loop for bl in (blockchain-blocks chain)
-        collecting (decode-payload bl)))
+        collecting (decode bl)))
 
 
 
@@ -323,17 +324,17 @@ Also returns (as a secondary value):
     ;; add strings to blockchain.
     (loop for str in test-data
           do
-          (add-data-to-blockchain chain
-                                  (encode-payload str)))
+          (add-data chain
+                    (encode str)))
     ;; verify blockchain
-    (assert (blockchain-ok chain))
+    (assert (verify chain))
     ;;compare payloads with original str
     ;;note: payloads are in reverse order than original test-data.
     ;;note: ignore initial block.
     (let
         ((a
            (butlast (loop for bl in (blockchain-blocks chain)
-                          collecting (decode-payload bl))))
+                          collecting (decode bl))))
          (b
            (reverse test-data)))
       ;; return the blockchain, the test as boolean values,
@@ -526,9 +527,9 @@ Sleep: time to sleep before retry."
       ((is-blockchain                   ; is it a blockchain object? 
          (eql (class-of obj)
               (find-class 'blockchain)))        (is-verified         ; is it a blockchain object, and verified?
-         (and is-blockchain (blockchain-ok obj)))
-       (last-block-there (last-block-on-blockchain obj))
-       (last-block-here (last-block-on-blockchain (server-blockchain server))))
+         (and is-blockchain (verify obj)))
+       (last-block-there (last-block obj))
+       (last-block-here (last-block (server-blockchain server))))
 
     ;; handle scenarios where one of the chains is blank
     (cond
@@ -547,7 +548,7 @@ Sleep: time to sleep before retry."
               ;; the longer chain
               (makes-sense
                 (and has-newer-block
-                     (verify-blockchain-against (server-blockchain server) obj))))
+                     (verify-against (server-blockchain server) obj))))
          ;; print message according to each failed validation.
          
          (cond
