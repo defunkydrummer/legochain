@@ -11,7 +11,8 @@
                #:usocket-server
                #:portable-threads) 
   :serial T
-  :components ((:file "legochain"))
+  :components ((:file "legochain")
+               (:file "peertopeer"))
   :description  "Toy blockchain by defunkydrummer (flavio).")
 
 
