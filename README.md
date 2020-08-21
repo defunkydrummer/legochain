@@ -23,6 +23,21 @@ You can start by taking a look at [legochain.lisp](legochain.lisp) and then to [
 
 - To show seasoned CL developers who still haven't yet found out what is a blockchain, block mining, and the "nonce" values, a simple answer by looking at the code.
 
+
+## Supported features
+
+- Add any kind of data to the block's payload. You only need to define the encoding for the payload using `conspack:defencoding` (see the code)
+- Verification of one blockchain against other, rejecting invalid blockchains
+- Verification of the continuity (soundness) of each blocks' hash value and sequence value
+
+Peer to peer supported operations: 
+
+- Send blockchain to peer
+- Request blockchain from peer
+- Say "hi" to peer.
+
+You can start many peers from your same machine so you can experiment adding more features to the code.
+
 ## How to install (for newcomers to CL)
 
 - Install [Portacle](https://portacle.github.io/), the portable Common Lisp environent.
