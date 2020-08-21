@@ -10,10 +10,10 @@ This is a simple project with the following goals, either:
 
 To show newcomers to Common Lisp, an example of how to implement something not so simple but not too complex, like a blockchain, that would involve the use of:
 
-- Cryptography
-- Regular expression
-- Sockets
-- Objects (the CLOS system)
+- Cryptography, using [ironclad](https://github.com/sharplispers/ironclad)
+- Regular expressions, using [cl-ppcre](https://edicl.github.io/cl-ppcre/)
+- Sockets, using [usocket](https://github.com/usocket/usocket)
+- Objects with [the Common Lisp Object System](http://www.gigamonkeys.com/book/object-reorientation-generic-functions.html)
 
 The code is written with as many comments as possible, and is as clear as I can manage to. The aim was not performance, nor production-quality, but educational value.
 
