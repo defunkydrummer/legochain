@@ -2,6 +2,8 @@
 
 ## What is this?
 
+This simple program implements a working blockchain class (*based on block mining with a difficulty level*) plus a very simple "peer to peer" protocol that enables two or more servers to talk to each other and send/receive their blockchains, based on TCP sockets.  
+
 This is a simple project with the following goals, either:
 
 ### Goal A
