@@ -1,15 +1,3 @@
-(defpackage :legochain
-  (:use :cl)
-  (:export
-   :blockchain
-   :compute-hash
-   :decode-payload 
-   :add-data-to-blockchain
-   :push-block-to-blockchain
-   :last-block-on-blockchain
-   :verify-blockchain
-   ))
-
 (in-package :legochain)
 
 (declaim (optimize (debug 3) (speed 0)))
@@ -29,6 +17,7 @@
 
 ;; data type of our payloads...
 (deftype payload-type () '(simple-array (unsigned-byte 8)))
+
 
 (defclass bblock ()
   ;; The blockchain block.
@@ -274,8 +263,8 @@ Also returns (as a secondary value):
         (let ((their-next-block
                 (get-block  other-chain
                             (1+ (block-id last-mine)))))
-          (eql (block-previous-hash their-next-block)
-               (compute-hash last-mine)))))))
+          (equal (block-previous-hash their-next-block)
+                 (compute-hash last-mine)))))))
 
 ;;-------------------------------------------------------------------
 

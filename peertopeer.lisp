@@ -37,14 +37,14 @@
   (declare (type encoded-data-type encoded)) 
   "Inverse of encode-data. "
   (conspack:decode (ironclad:hex-string-to-byte-array encoded)))
-;; ------------------ end protocol -----------------------------
 
 (defun send-message-to-stream (&key operation object to-stream)
   "Create a message to send through the socket, based on operation and the data. This also encodes object to data, using conspack."
   (assert (member operation *operations*))
   ;; message is: operation . data
-  (print `(,operation . ,(encode-data object))
-         to-stream))
+  (print
+   `(,operation . ,(encode-data object))
+   to-stream))
 
 (defun decode-message (obj)
   "Decode message. Object has already been READ, of course.
@@ -63,6 +63,7 @@ Returns operation and decoded object."
     ;; decode data by using CONSPACK decode, and return
     (values operation
             (decode-data data))))
+;; ------------------ end protocol -----------------------------
 
 
 ;; ----------------- STATUS -----------------------------
@@ -70,33 +71,33 @@ Returns operation and decoded object."
 ;; This contains the status of our server
 
 (defclass server ()
-  ((host :initarg :host
-         :initform *default-host*
-         :reader server-host
-         :documentation "Vector with IP of this server."
-         :type simple-array)
-   (port :initarg :port
-         :initform *default-port*
-         :reader server-port
-         :documentation "Port of this server."
-         ;; can be an integer from 0 to 65535, we tell Lisp.
-         :type (integer 0 65535))
-   (socket :accessor server-socket
-           :documentation "The socket server of this server."
-           :type usocket:stream-server-usocket)
-   (thread :accessor server-thread
-           :documentation "The thread where the server runs.")
+  ((host       :initarg :host
+               :initform *default-host*
+               :reader server-host
+               :documentation "Vector with IP of this server."
+               :type simple-array)
+   (port       :initarg :port
+               :initform *default-port*
+               :reader server-port
+               :documentation "Port of this server."
+               ;; can be an integer from 0 to 65535, we tell Lisp.
+               :type (integer 0 65535))
+   (socket     :accessor server-socket
+               :documentation "The socket server of this server."
+               :type usocket:stream-server-usocket)
+   (thread     :accessor server-thread
+               :documentation "The thread where the server runs.")
    (blockchain :accessor server-blockchain
                :documentation "The blockchain of this server."
                :type blockchain)
-   (peers :accessor server-peers
-          :documentation "A list of peers"
-          :type cons))
+   (peers      :accessor server-peers
+               :documentation "A list of peers"
+               :type cons))
   (:documentation "Server status, config, and data."))
 
 
 
-;; ----------------- CLIENT -----------------------------
+;; ----------------- CLIENT part -----------------------------
 ;; Client sends messages to other peers' servers
 
 (defun send (msg data host port &key (retries 2)
@@ -148,7 +149,7 @@ Sleep: time to sleep before retry."
         host
         port))
 
-;;---------------------- SERVER ------------------------------
+;;---------------------- SERVER part  ------------------------------
 ;; Server receives messages and performs actions accordingly.
 
 (defun hi-message-handler (obj stream)
@@ -194,28 +195,25 @@ Sleep: time to sleep before retry."
        (when is-verified
          (format stream "Received a blockchain and we have no blocks. Installing.~%")
          (setf (server-blockchain server) obj)))
-      (t                      ; case when both blockchain have blocks!
+      (t                       ; case when both blockchains have blocks!
        (let* ((has-newer-block ; is it a blockchain object, verified, and has a higher block id?
                 (and is-verified
                      (> (block-id last-block-there)
                         (block-id last-block-here))))
-              ;; verify that my shorter chain is contained in 
-              ;; the longer chain
+              ;; Chain "makes sense" when my shorter chain is contained in the longer chain.
               (makes-sense
                 (and has-newer-block
                      (verify-against (server-blockchain server) obj))))
          ;; print message according to each failed validation.
-         
          (cond
-           ((not is-blockchain) (format stream "Not a blockchain!~%"))
-           ((not is-verified) (format stream "Received invalid blockchain!~%"))
+           ((not is-blockchain)   (format stream "Not a blockchain!~%"))
+           ((not is-verified)     (format stream "Received invalid blockchain!~%"))
            ((not has-newer-block) (format stream "Blockchain is not longer than ours.~%"))
-           ((not makes-sense) (format stream "Blockchain doesn't contain mine. FRAUD! ~%"))
+           ((not makes-sense)     (format stream "Blockchain doesn't contain mine. FRAUD! ~%"))
            ;; all checks passed
-           (t (format stream "Received a longer blochain!~%")
+           (t (format stream "Received a longer blochain! Installing.~%")
               ;; installing in our server as the new blockchain
-              (setf (server-blockchain server) obj))))
-       ))))
+              (setf (server-blockchain server) obj))))))))
 
 (defun message-handler (msg stream server)
   "Handle an incoming message."
@@ -227,16 +225,12 @@ Sleep: time to sleep before retry."
         ;; what do we do?
         ;; dispatch according to the type of operation
         (case operation
-          (:hi (hi-message-handler obj stream))
-          (:request-all
-           (request-all-message-handler obj stream server))
-          (:request-all-response
-           (request-all-response-message-handler obj stream server))
-          (otherwise
-           (format stream "Received an unimplemented operation: ~A~%" operation))))
-      ;; not a good type of msg
-      (format stream "Invalid data type of message: ~A~% "
-              (type-of msg))))
+          (:hi                    (hi-message-handler obj stream))
+          (:request-all           (request-all-message-handler obj stream server))
+          (:request-all-response  (request-all-response-message-handler obj stream server))
+          (otherwise              (format stream "Received an unimplemented operation: ~A~%" operation))))
+      ;; else: not a good type of msg
+      (format stream "Invalid data type of message: ~A~% " (type-of msg))))
 
 
 (defun server-function (stream stdout server)
@@ -251,8 +245,7 @@ Sleep: time to sleep before retry."
       ((eql o 'eof) (format stdout "EOF!"))
       (t (format stdout "Received object: ~A~%" o)
          ;; handle the message
-         (message-handler o stdout server)
-         ))))
+         (message-handler o stdout server)))))
 
 (defun create-legochain-server (&key (host *default-host*)
                                      (port *default-port*)
@@ -286,30 +279,42 @@ By default the server has a blank blockchain"
   (usocket:socket-close (server-socket s)))
 
 
-;; --------------- test servers- -----
+;; --------------- test peer-to-peer interaction -----
 
 (defun servers-test (port1 port2)
-  (let ((s1 (create-legochain-server :port port1
+  (let* ((s1 (create-legochain-server :port port1
                                      :blank-blockchain T))
         (s2 (create-legochain-server :port port2
                                      :blank-blockchain nil)))
+    
     ;; s1 asks s2 for its (longer) blockchain
+    (format t "S1 asks S2 for its longer blockchain.~%")
     (please-send-me-blockchain *default-host*
                                port2
                                s1)
-                                        ;(sleep 0.5)
+
     ;; now again
+    (sleep 5)
+    (format t "S1 asks S2 for its longer blockchain, again.~%")
     (please-send-me-blockchain *default-host*
                                port2
-                               s1)
-                                        ;(sleep 0.5)
+                               s1)                                       
+
+
+    ;; now S1 will have a new block
+    (format t "Adding new block to S1~%")
+    (add-data (server-blockchain s1) "More data")
+    (sleep 5)
+
     ;; now s2 asks s1
+    (format t "S2 asks S1 for its  blockchain.~%")
     (please-send-me-blockchain *default-host*
                                port1
-                               s2)
-
+                               s2)    
     (sleep 10) ;before closing the server...
 
     (close-server s1)
     (close-server s2)
-    (list s1 s2)))
+    ;; list payloads of all chains
+    (print (list-payloads (server-blockchain s1)))
+    (print (list-payloads (server-blockchain s2)))))
