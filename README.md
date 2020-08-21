@@ -13,7 +13,7 @@ To show newcomers to Common Lisp, an example of how to implement something not s
 - Cryptography, using [ironclad](https://github.com/sharplispers/ironclad)
 - Regular expressions, using [cl-ppcre](https://edicl.github.io/cl-ppcre/)
 - Sockets, using [usocket](https://github.com/usocket/usocket)
-- Objects with [the Common Lisp Object System](http://www.gigamonkeys.com/book/object-reorientation-generic-functions.html)
+- [The Common Lisp Object System](http://www.gigamonkeys.com/book/object-reorientation-generic-functions.html), specifically the use of generic functions and multiple dispatch, to make the code a bit simpler. 
 
 The code is written with as many comments as possible, and is as clear as I can manage to. The aim was not performance, nor production-quality, but educational value.
 
