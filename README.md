@@ -15,7 +15,9 @@ To show newcomers to Common Lisp, an example of how to implement something not s
 - Sockets
 - Objects (the CLOS system)
 
-The code is written with as many comments as possible, and with as clear as I can manage to. The aim was not performance, nor production-quality, but educational value.
+The code is written with as many comments as possible, and is as clear as I can manage to. The aim was not performance, nor production-quality, but educational value.
+
+You can start by taking a look at [legochain.lisp](legochain.lisp) and then to [peertopeer.lisp](peertopeer.lisp)
 
 ### Goal B
 
