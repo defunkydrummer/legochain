@@ -1,5 +1,6 @@
 (in-package :legochain)
 
+;; We tell the compiler to increase debug info. 
 (declaim (optimize (debug 3) (speed 0)))
 
 ;; Our blockchain.
@@ -15,29 +16,27 @@
   ;; homage to bitcoin's 1st block
   (conspack:encode "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks"))
 
-;; data type of our payloads...
+;; data type of our payloads: a byte array. 
 (deftype payload-type () '(simple-array (unsigned-byte 8)))
 
 
 (defclass bblock ()
-  ;; The blockchain block.
-  ((id :initarg :id
-       :reader block-id
-       :documentation "Id of the current block."
-       :type integer)
+  ;; A blockchain block.
+  ((id            :initarg :id
+                  :reader block-id
+                  :documentation "Id of the current block."
+                  :type integer)
    (previous-hash :initarg :previous-hash
                   :reader block-previous-hash
                   :type (or string null))
-   ;; (this-hash :initarg this-hash
-   ;;            :documentation "Hash value of the current block.")
-   (timestamp :initarg :timestamp
-              :reader block-timestamp)
-   (nonce-value :initarg :nonce-value
-                :documentation "Nonce value for this block.")
-   (payload :initarg :payload
-            :reader block-payload
-            :documentation "The block's usable (payload) data."
-            :type payload-type))
+   (timestamp     :initarg :timestamp
+                  :reader block-timestamp)
+   (nonce-value   :initarg :nonce-value
+                  :documentation "Nonce value for this block.")
+   (payload       :initarg :payload
+                  :reader block-payload
+                  :documentation "The block's usable (payload) data."
+                  :type payload-type))
   (:documentation "A block in the blockchain"))
 
 ;; tell conspack how to encode such a block into a vector of bytes
@@ -140,8 +139,7 @@ That is, a block that satisfies the difficulty/challenge."
                            :id id
                            :previous-hash previous-hash
                            :timestamp (get-universal-time)
-                           :nonce-value nonce-value
-                           ))
+                           :nonce-value nonce-value))
       (incf nonce-value)
       ;; compute hash until it complies with target challenge.
       :until (hash-complies-with-difficulty (compute-hash b)))
@@ -157,8 +155,8 @@ this automatically mines a new block with the payload."
   (declare (type payload-type payload))
   ;; get the id of the last object, the hash, etc
   (let* ((recent-block (last-block chain))
-         (last-id (block-id recent-block))
-         (last-hash (compute-hash recent-block)))
+         (last-id      (block-id recent-block))
+         (last-hash    (compute-hash recent-block)))
     ;; mine new block !
     (let ((new
             (mine-new-block
@@ -200,7 +198,7 @@ And creates a blank blockchain (unless blank = null)"
 (defmethod complies-with-rules ((head bblock) (previous bblock))
   "T if the block complies with the rules of the blockchain. 
 Requires the previous block."
-  (and 
+  (and ; lisp's shortcutting logical AND 
    ;; hash of previous block equals previous-hash of current block
    (string= (block-previous-hash head)
             (compute-hash previous))
@@ -214,8 +212,7 @@ Requires the previous block."
    ;; hash complies with challenge
    (hash-complies-with-difficulty (compute-hash head))
    ;; T here only so the AND block returns either T or NIL
-   T
-   ))
+   T))
 
 (defmethod complies-with-rules ((head bblock) (previous null))
   ;; If there's no previous block, the rules are OK.
@@ -251,7 +248,7 @@ Also returns (as a secondary value):
 (defmethod verify-against ((my-chain blockchain) (other-chain blockchain))
   "Verify my blockchain against a potential longer blockchain."
   (when (verify other-chain)
-    (let ((last-mine (last-block my-chain))
+    (let ((last-mine  (last-block my-chain))
           (last-other (last-block other-chain)))
       (when (< (block-id last-mine)
                (block-id last-other))
@@ -259,7 +256,6 @@ Also returns (as a secondary value):
         ;; check that the hash of my last block
         ;; is equal to the "previous-hash" of the
         ;; next block in the other chain
-        
         (let ((their-next-block
                 (get-block  other-chain
                             (1+ (block-id last-mine)))))
@@ -267,21 +263,7 @@ Also returns (as a secondary value):
                  (compute-hash last-mine)))))))
 
 ;;-------------------------------------------------------------------
-
-
-;; misc test / helper
-
-;;show all blockchain
-;; #+sbcl
-;; (defun show-blockchain (chain)
-;;   (mapcar (lambda (b)
-;;             (mapcar
-;;              (lambda (slot-name)
-;;                (list slot-name
-;;                      (slot-value b slot-name)))
-;;              (mapcar #'sb-mop:slot-definition-name
-;;                      (sb-mop:class-slots (class-of b)))))
-;;           (blockchain-blocks chain)))
+;; some practical stuff
 
 (defun add-stuff (chain)
   "Add test blocks to blockchain."
@@ -298,8 +280,6 @@ Also returns (as a secondary value):
   "Show all payloads (decoded)"
   (loop for bl in (blockchain-blocks chain)
         collecting (decode bl)))
-
-
 
 (defun test-blockchain ()
   "Simple blockchain test."
@@ -328,7 +308,7 @@ Also returns (as a secondary value):
            (reverse test-data)))
       ;; return the blockchain, the test as boolean values,
       ;; and the payload
-      (values
+      (list
        chain
        :test-result (equalp a b)
               :blockchain-data a
