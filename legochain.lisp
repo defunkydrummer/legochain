@@ -90,7 +90,7 @@
 NOTE: Assumes the blockchain has been verified."
    (with-slots (blocks) chain
     (elt blocks
-         ;; note tha the blocks are in reverse order, because they are pushed.
+         ;; note that the blocks are in reverse order, because they are pushed.
          (- (length blocks) index 1))))
 
 ;; compute hash for the block
